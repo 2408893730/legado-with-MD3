@@ -178,6 +178,8 @@ class HttpReadAloudService : BaseReadAloudService(),
         super.onCreate()
         exoPlayer.addListener(this)
         exoPlayer.setPlaybackSpeed(globalPlaybackSpeed)
+        // 上一次会话没走到 onDestroy 留下的缓存音频在这里清掉，理由见 [sweepBurnAfterReadLeftovers]。
+        Coroutine.async { sweepBurnAfterReadLeftovers() }
         lifecycleScope.launch {
             readAloudSettingsGateway.settings.collectLatest {
                 readAloudSettings = it
@@ -1036,6 +1038,20 @@ class HttpReadAloudService : BaseReadAloudService(),
             inputStream.use {
                 it.copyTo(out)
             }
+        }
+    }
+
+    /**
+     * 即听即焚的残留清扫，只在服务起手时跑。
+     *
+     * 跨文件依赖：[removeCacheFile] 唯一的调用点在 [onDestroy]，进程被杀、划掉最近任务、崩溃都到不了
+     * 那里，上一次会话留在 `httpTTS` 里的音频就没人管。这个语义下没有需要保护的正文，起手删干净即可；
+     * 「保留一段时间」不在这里动手，否则当前章的缓存会在开播前删掉，逼出整章重复合成。
+     */
+    private fun sweepBurnAfterReadLeftovers() {
+        if (readAloudSettings.audioCacheCleanTime > 0) return
+        FileUtils.listDirsAndFiles(ttsFolderPath)?.forEach {
+            FileUtils.delete(it.absolutePath)
         }
     }
 
